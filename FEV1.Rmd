@@ -671,6 +671,6 @@ Outcome2_p_Clinical_stage['FEV11:Clinical_stage_num']
 # Subgroup analyses
 #############################################################################
 
-# The study involved conducting pre-specified subgroup analyses based on birth sex and age, as well as additional subgroups determined by significant factors identified in the interaction tests. Specifically, subgroup analyses were performed on subgroups defined by sex, age, smoking history, cerebrovascular disease, tuberculosis, and chronic obstructive pulmonary disease. In order to ensure consistency, overlap weighting propensity scores were re-created prior to subgroup model development, and all other analyses followed the same process outlined above. Due to the length of the analysis, the codes utilized in this process were not repeated in this section for brevity.
+# The study involved conducting pre-specified subgroup analyses based on birth sex, age, body mass index, and smoking ever. In order to ensure consistency, overlap weighting propensity scores were re-created prior to subgroup model development, and all other analyses followed the same process outlined above. Due to the length of the analysis, the codes utilized in this process were not repeated in this section for brevity.
 
 ```
