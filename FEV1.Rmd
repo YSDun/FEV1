@@ -1,0 +1,676 @@
+---
+title: "Association between FEV1 and Long-Term Survival in Operable Patients with Early-Stage Non-Small Cell Lung Cancer: A Prospective Study with Propensity Overlap Weighting"
+---
+
+
+```{r}
+# Hypothesis: Impaired pre-surgical forced expiratory volume in one second (FEV1) is associated with higher risk of and shorter relapse-free survival and overall survival in operable patients with early-stage non-small-cell lung cancer.
+
+
+## Predictor: Percent of predicted forced expiratory volume in one second (FEV1) ##
+# Continuous variable: FEV1_continuos
+# Categorical variable: FEV1
+
+
+## Outcomes: the name in the manuscript, the name in the dataset, variable type ##
+# Outcome 1: Relapse-free survival, Relapse_free_survival, Categorical variable  (the date of event: Relapse_free_survival_time_to_event)
+# Outcome 2: Overall survival, Overall_survival, Categorical variable (the date of event: Overall_survival_time_to_event)
+
+
+## Covariates: the name in the dataset, variable type ##
+# Sex: Sex, Categorical variable
+# Age: Age, Continuous variable
+# Body mass index: BMI, Continuous variable
+# Smoker ever: Smoking_ever, Categorical variable
+# Metabolic equivalents: MET, Continuous variable
+# Hypertension: Hypertension, Categorical variable
+# Dyslipidemia: Dyslipidemia, Categorical variable
+# Diabetes mellitus: Diabetes, Categorical variable
+# Coronary artery disease: Coronary_artery_disease, Categorical variable
+# Cerebrovascular disease: Cerebrovascular_disease, Categorical variable
+# Chronic bronchitis: Bronchitis, Categorical variable
+# Histology: Histology, Categorical variable
+# Type of lung resection: Type_of_lung_resection, Categorical variable
+# Clinical stage: Clinical_stage, Categorical variable
+
+```
+
+
+
+
+```{r}
+
+# packages needed to be installed
+library("pROC")
+library("PSweight")
+library("tableone")
+library("survey")
+library("cobalt")
+library("fmsb")
+library("survival")
+library("survminer")
+library("rms")
+library("EValue")
+library("boot")
+
+```
+
+
+```{r}
+
+##############################################################
+# To read in data
+##############################################################
+setwd("working directory")
+data <- read.csv("Dataset.csv",na=c("-"))
+data_na_omit <- na.omit(data)
+
+```
+
+
+```{r}
+
+#######################################################################################################
+#  Receiver Operating Characteristic (ROC) curve analysis and optimal cut-off value identification
+#######################################################################################################
+# Reference: Xavier Robin, Natacha Turck, Alexandre Hainard, Natalia Tiberti, Frédérique Lisacek, Jean-Charles Sanchez, Markus Müller，Stefan Siegert, Matthias Doering, Zane Billings (2021). pROC: Display and Analyze ROC Curves-Processing in R. R package version 3.5-5. https://cran.r-project.org/web/packages/pROC
+
+## ROC curve for the outcome of relapse-free survival
+rocobj_outcome1 <- pROC::roc(Relapse_free_survival~FEV1_continuos+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage, data=data_na_omit)
+plot.roc(rocobj_outcome1$FEV1_continuos,
+     legacy.axes = TRUE,
+     main="ROC best threshold",
+     thresholds="best", # to calculate optimal cut-off point
+     print.thres="best") # to show the optimal cut-off value in the ROC curve
+
+## ROC curve for the outcome of overall survival
+rocobj_outcome2 <- pROC::roc(Overall_survival~FEV1_continuos+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage, data=data_na_omit)
+plot.roc(rocobj_outcome2$FEV1_continuos,
+     legacy.axes = TRUE,
+     main="ROC best threshold",
+     thresholds="best", # to calculate optimal cut-off point
+     print.thres="best") # to show the optimal cut-off value in the ROC curve
+
+```
+
+
+```{r}
+
+######################################################################
+# To transform variables to appropriate types for further analyses
+######################################################################
+data_na_omit$FEV1 <- as.factor(data_na_omit$FEV1)
+data_na_omit$Sex <- as.factor(data_na_omit$Sex)
+data_na_omit$Smoking_ever <- as.factor(data_na_omit$Smoking_ever)
+data_na_omit$Hypertension <- as.factor(data_na_omit$Hypertension)
+data_na_omit$Dyslipidemia <- as.factor(data_na_omit$Dyslipidemia)
+data_na_omit$Diabetes <- as.factor(data_na_omit$Diabetes)
+data_na_omit$Coronary_artery_disease <- as.factor(data_na_omit$Coronary_artery_disease)
+data_na_omit$Cerebrovascular_disease <- as.factor(data_na_omit$Cerebrovascular_disease)
+data_na_omit$Bronchitis <- as.factor(data_na_omit$Bronchitis)
+data_na_omit$Histology <- as.factor(data_na_omit$Histology)
+data_na_omit$Type_of_lung_resection <- as.factor(data_na_omit$Type_of_lung_resection)
+data_na_omit$Clinical_stage <- as.factor(data_na_omit$Clinical_stage)
+
+```
+
+
+```{r}
+
+##############################################################
+# Propensity score overlap weighting
+##############################################################
+# References: 	
+# Tianhui Zhou, Guangyu Tong, Fan Li, Laine Thomas, Fan Li (2022). PSweight: Propensity Score Weighting for Causal Inference with Observational Studies and Randomized Trials-Processing in R. R package version 1.1.8. https://cran.r-project.org/web/packages/PSweight
+#	Thomas Lumley (2021). survey: Analysis of Complex Survey Samples-Processing in R. R package version 4.1-1. https://cran.r-project.org/web/packages/survey
+# Kazuki Yoshida, Alexander Bartel, Jonathan J Chipman, Justin Bohn, Lucy DAgostino McGowan, Malcolm Barrett, Rune Haubo B Christensen, gbouzill (2022). tableone: Create 'Table 1' to Describe Baseline Characteristics with or without Propensity Score Weights-Processing in R. R package version 0.13.2. https://cran.r-project.org/web/packages/tableone
+# Noah Greifer (2023). cobalt: Covariate Balance Tables and Plots-Processing in R. R package version 4.5.0. https://cran.r-project.org/web/packages/cobalt
+
+# Step 1. To define the propensity score formula
+ps.formula<- FEV1~Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage
+
+# Step 2. To define the outcome formula
+# Outcome 1: Relapse-free survival
+out.formula_1<-Relapse_free_survival~Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage
+
+# Outcome 2: Overall survival
+out.formula_2<-Overall_survival~Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage
+
+# Step 3. To conduct propensity score weighting
+vars <- c("Sex","Age","BMI","Smoking_ever","MET","Hypertension","Dyslipidemia","Diabetes","Coronary_artery_disease","Cerebrovascular_disease","Bronchitis","Histology","Type_of_lung_resection","Clinical_stage")
+
+# Outcome 1: Relapse-free survival
+ow1<-PSweight(ps.formula = ps.formula,yname = 'Relapse_free_survival',data = data_na_omit,weight = 'overlap')
+
+# Outcome 2: Overall survival
+ow2<-PSweight(ps.formula = ps.formula,yname = 'Overall_survival',data = data_na_omit,weight = 'overlap')
+
+
+# Step 4: to append propensity score and weights
+# Outcome 1: Relapse-free survival
+ow1_outfit <- OUTmethod(out.formula = out.formula_1, family='binomial', datain = data_na_omit, dataout = data_na_omit)
+ow1_est <- cbind(ow1_outfit$m.est, data_na_omit) 
+names(ow1_est)[names(ow1_est) == 'ow1_outfit$m.est'] <- 'm_est'
+ow1_est$ps_0 <- ow1$propensity[,1]
+ow1_est$ps_1 <- ow1$propensity[,2]
+ow1_est$psweights <- ifelse (ow1_est$FEV1==1, ow1_est$ps_0, ow1_est$ps_1)
+
+# Outcome 2: Overall survival
+ow2_outfit <- OUTmethod(out.formula = out.formula_2, family='binomial', datain = data_na_omit, dataout = data_na_omit)
+ow2_est <- cbind(ow2_outfit$m.est, data_na_omit)
+names(ow2_est)[names(ow2_est) == 'ow2_outfit$m.est'] <- 'm_est'
+ow2_est$ps_0 <- ow2$propensity[,1]
+ow2_est$ps_1 <- ow2$propensity[,2]
+ow2_est$psweights <- ifelse (ow2_est$FEV1==1, ow2_est$ps_0, ow2_est$ps_1)
+
+
+# Step 5: to output the distribution of covariates between the two groups before and after propensity score overlap weighting.
+
+# to show the distribution of covariates before propensity score overlap weighting, with standardized mean differences between the two groups.
+tabUnmatched <- CreateTableOne(vars = vars, strata = "FEV1", data = data_na_omit, test = FALSE)
+print(tabUnmatched, smd = TRUE)
+
+# to show the distribution of covariates after propensity score overlap weighting, with standardized mean differences between the two groups.
+rhcSvy <- svydesign(ids = ~ 1, data = ow1_est, weights = ~ ow1_est$psweights)
+tabWeighted <- svyCreateTableOne(vars = vars, strata = "FEV1", data = rhcSvy, test = FALSE)
+print(tabWeighted, smd = TRUE)
+
+#Step 6: to assess the balance in variables between the two groups by Love plot.
+new.names <- c(Sex = "Sex",
+               Age = "Age",
+               BMI = "BMI",
+               Smoking_ever = "Smoke ever",
+               MET = "Metabolic equivalents",
+               Hypertension = "Hypertension",
+               Dyslipidemia = "Dyslipidemia",
+               Diabetes = "Diabetes mellitus",
+               Coronary_artery_disease = "Coronary artery disease",
+               Cerebrovascular_disease = "Cerebrovascular disease",
+               Bronchitis = "Chronic bronchitis",
+               Histology_1 = "Adenocarcinoma",
+               Histology_2 = "Squamouscell",
+               Histology_3 = "Other NSCLCs",
+               Type_of_lung_resection_1 = "Pneumonectomy",
+               Type_of_lung_resection_2 = "Lobectomy",
+               Type_of_lung_resection_3 = "Segmentectomy",
+               Type_of_lung_resection_4 = "Wedgeresection",
+               Type_of_lung_resection_5 = "Explorative thoracotomy with out lung resection",
+               Type_of_lung_resection_6 = "Two lung lobes resection",
+               Clinical_stage_0 = "Clinical stage 0",
+               Clinical_stage_1 = "Clinical stage I",
+               Clinical_stage_2 = "Clinical stage II",
+               Clinical_stage_3 = "Clinical stage IIIA"
+)
+
+love.plot(ps.formula, data = data_na_omit, abs = TRUE, weights = ow1_est$psweights,
+          drop.distance = TRUE,
+          thresholds = c(m = .1),
+          var.names = new.names,
+          line=TRUE,
+          sample.names = c("Unweighted", "PS Weighted"),
+          limits = c(0, .82),
+          position = c(.75, .25)) +
+  theme(legend.box.background = element_rect(), 
+        legend.box.margin = margin(1, 1, 1, 1))
+
+```
+
+
+```{r}
+
+############################################################################################################################################################################
+# To fit Cox proportional hazards models and calculate incidence rate difference between the groups, before and after incorporating weights derived from overlap weighting.
+############################################################################################################################################################################
+# References: 
+# Terry M Therneau, Thomas Lumley, Atkinson Elizabeth, Crowson Cynthia (2023). survival: Survival Analysis-Processing in R. R package version 3.5-5. https://cran.r-project.org/web/packages/survival
+# Minato Nakazawa (2023). fmsb: Functions for Medical Statistics Book with some Demographic Data-Processing in R. R package version 0.7.5. https://cran.r-project.org/web/packages/fmsb
+
+
+## Outcome 1: Relapse-free survival ##
+# Cox proportional hazards model before propensity score overlap weighting
+cox_model_crude <- coxph(formula=Surv(Relapse_free_survival_time_to_event,Relapse_free_survival) ~ FEV1,data=data_na_omit,method = "breslow",cluster=JMP_ID)
+summary(cox_model_crude,extend=FALSE)
+
+# Cox proportional hazards model after propensity score overlap weighting
+cox_model_weighted <- coxph(formula=Surv(Relapse_free_survival_time_to_event,Relapse_free_survival) ~ FEV1,data=data_na_omit,weights=ow1_est$psweights,method = "breslow",cluster=JMP_ID)
+summary(cox_model_weighted,extend=FALSE)
+
+# Incidence rate difference before propensity score overlap weighting
+cox_model_pyears<- pyears(cox_model_crude,scale = 12)
+summary(cox_model_pyears,rate=TRUE,ci.r=TRUE)
+crude_IRD <- ratedifference(cox_model_pyears$event[2], cox_model_pyears$event[1], cox_model_pyears$pyears[2], cox_model_pyears$pyears[1],CRC=TRUE,conf.level = 0.95)
+crude_IRD$estimate*1000 # transform the unit from event per person-years to event per 1000 person-years
+crude_IRD$conf.int*1000 # transform the unit from event per person-years to event per 1000 person-years
+crude_IRD$p.value
+
+# Incidence rate difference after propensity score overlap weighting
+cox_model_weighted_pyears<- pyears(cox_model_weighted,scale = 12)
+summary(cox_model_weighted_pyears,rate=TRUE,ci.r=TRUE)
+weighted_IRD <- ratedifference(cox_model_weighted_pyears$event[2], cox_model_weighted_pyears$event[1], cox_model_weighted_pyears$pyears[2], cox_model_weighted_pyears$pyears[1],CRC=TRUE,conf.level = 0.95)
+weighted_IRD$estimate*1000 # transform the unit from event per person-years to event per 1000 person-years
+weighted_IRD$conf.int*1000 # transform the unit from event per person-years to event per 1000 person-years
+weighted_IRD$p.value
+
+
+## Outcome 2: Overall survival ##
+# Cox proportional hazards model before propensity score overlap weighting
+cox_model_crude2 <- coxph(formula=Surv(Overall_survival_time_to_event, Overall_survival) ~ FEV1,data=data_na_omit,method = "breslow",cluster=JMP_ID)
+summary(cox_model_crude2,extend=FALSE)
+
+# Cox proportional hazards model after propensity score overlap weighting
+cox_model_weighted2 <- coxph(formula=Surv(Overall_survival_time_to_event, Overall_survival) ~ FEV1,data=data_na_omit,weights=ow2_est$psweights,method = "breslow",cluster=JMP_ID)
+summary(cox_model_weighted2,extend=FALSE)
+
+# Incidence rate difference before propensity score overlap weighting
+cox_model_pyears2<- pyears(cox_model_crude2,scale = 12)
+summary(cox_model_pyears2,rate=TRUE,ci.r=TRUE)
+crude_IRD2 <- ratedifference(cox_model_pyears2$event[2], cox_model_pyears2$event[1], cox_model_pyears2$pyears[2], cox_model_pyears2$pyears[1],CRC=TRUE,conf.level = 0.95)
+crude_IRD2$estimate*1000 # transform the unit from event per person-years to event per 1000 person-years
+crude_IRD2$conf.int*1000 # transform the unit from event per person-years to event per 1000 person-years
+crude_IRD2$p.value
+
+# Incidence rate difference after propensity score overlap weighting
+cox_model_weighted_pyears2<- pyears(cox_model_weighted2,scale = 12)
+summary(cox_model_weighted_pyears2,rate=TRUE,ci.r=TRUE)
+weighted_IRD2 <- ratedifference(cox_model_weighted_pyears2$event[2], cox_model_weighted_pyears2$event[1], cox_model_weighted_pyears2$pyears[2], cox_model_weighted_pyears2$pyears[1],CRC=TRUE,conf.level = 0.95)
+weighted_IRD2$estimate*1000 # transform the unit from event per person-years to event per 1000 person-years
+weighted_IRD2$conf.int*1000 # transform the unit from event per person-years to event per 1000 person-years
+weighted_IRD2$p.value
+
+```
+
+
+
+```{r}
+
+############################################################################################################################################################################
+# To calculate E-value
+############################################################################################################################################################################
+# Reference: Maya B. Mathur, Louisa H. Smith, Peng Ding, Tyler J. VanderWeele (2023). EValue: Sensitivity Analyses for Unmeasured Confounding and Other Biases in Observational Studies and Meta-Analyses-Processing in R. R package version 4.1.3. https://cran.r-project.org/web/packages/EValue
+
+# E-Value for the outcome of relapse-free survival
+evalues.HR(est = 1.55, lo = 1.14, hi = 2.09, rare = FALSE) # evalues.HR(est = the point estimate, lo = the lower limit of the confidence interval, hi = the higher limit of the confidence interval, rare = True if outcome is rare (<15 percent at end of follow-up); False if outcome is not rare (>15 percent at end of follow-up))#
+
+# E-Value for the outcome of overall survival
+evalues.HR(est = 1.50, lo = 1.21, hi = 2.03, rare = FALSE) # evalues.HR(est = the point estimate, lo = the lower limit of the confidence interval, hi = the higher limit of the confidence interval, rare = True if outcome is rare (<15 percent at end of follow-up); False if outcome is not rare (>15 percent at end of follow-up))#
+
+
+```
+
+
+```{r}
+###########################################################
+# Internal validation by Bootstrapping 
+###########################################################
+# Reference: Angelo Canty, Brian Ripley (2022). boot: Bootstrap Functions (Originally by Angelo Canty for S)-Processing in R. R package version 1.3-28.1. https://cran.r-project.org/web/packages/boot
+
+
+## Outcome1: Relapse-free survival ##
+# To calculate C-index
+boot.cox.Cindex.estimate.outcome1 <- function(data,indices) {
+  samples <- data[indices, ]
+  L <- lrm(formula=out.formula_1, data = samples, x=T, y=T, weights=ow1_est$psweights,maxit=10000)
+  L$stats[6]
+}
+Cindex.boot.outcome1 <- boot(data_na_omit,boot.cox.Cindex.estimate.outcome1,R=1000)
+Cindex.boot.outcome1$t0
+Cindex.boot.outcome1.se <- sd(Cindex.boot.outcome1$t)
+Cindex.boot.outcome1_C_lower <- Cindex.boot.outcome1$t0-1.96*Cindex.boot.outcome1.se
+Cindex.boot.outcome1_C_lower
+Cindex.boot.outcome1_C_upper <- Cindex.boot.outcome1$t0+1.96*Cindex.boot.outcome1.se
+Cindex.boot.outcome1_C_upper
+# To calculate brier score
+boot.cox.brier.estimate.outcome1 <- function(data,indices) {
+  samples <- data[indices, ]
+  L <- lrm(formula=out.formula_1, data = samples, x=T, y=T, weights=ow1_est$psweights,maxit=10000)
+  L$stats[15]
+}
+brier.boot.outcome1 <- boot(data_na_omit,boot.cox.brier.estimate.outcome1,R=1000)
+brier.boot.outcome1$t0
+brier.boot.outcome1.se <- sd(brier.boot.outcome1$t)
+brier.boot.outcome1_B_lower <- brier.boot.outcome1$t0-1.96*brier.boot.outcome1.se
+brier.boot.outcome1_B_lower
+brier.boot.outcome1_B_upper <- brier.boot.outcome1$t0+1.96*brier.boot.outcome1.se
+brier.boot.outcome1_B_upper
+# To obtain calibration slope
+  L <- lrm(formula = out.formula_1, x = T, y = T,data=data_na_omit,weights = ow1_est$psweights)
+  Slope <- vector()
+  n <- nrow(data_na_omit)
+  for(i in 1 : 1000) {
+   g <- update(L, subset=sample(1 : n, n, replace=TRUE))
+   v <- validate(g)
+   Slope[i] <- v['Slope', 'index.corrected']
+   Slope[i]
+  }
+  Slope.outcome1.CI <- quantile(Slope, c(.025, .975))
+  Slope.outcome1.CI
+  Slope.outcome1 <- mean(Slope)
+  Slope.outcome1
+
+
+## Outcome 2: Overall Survival ##
+# To calculate C-index
+boot.cox.Cindex.estimate.outcome2 <- function(data,indices) {
+  samples <- data[indices, ]
+  L <- lrm(formula=out.formula_2, data = samples, x=T, y=T, weights=ow2_est$psweights,maxit=10000)
+  L$stats[6]
+}
+Cindex.boot.outcome2 <- boot(data_na_omit,boot.cox.Cindex.estimate.outcome2,R=1000)
+Cindex.boot.outcome2$t0
+Cindex.boot.outcome2.se <- sd(Cindex.boot.outcome2$t)
+Cindex.boot.outcome2_C_lower <- Cindex.boot.outcome2$t0-1.96*Cindex.boot.outcome2.se
+Cindex.boot.outcome2_C_lower
+Cindex.boot.outcome2_C_upper <- Cindex.boot.outcome2$t0+1.96*Cindex.boot.outcome2.se
+Cindex.boot.outcome2_C_upper
+# To calculate brier score
+boot.cox.brier.estimate.outcome2 <- function(data,indices) {
+  samples <- data[indices, ]
+  L <- lrm(formula=out.formula_2, data = samples, x=T, y=T, weights=ow2_est$psweights,maxit=10000)
+  L$stats[15]
+}
+brier.boot.outcome2 <- boot(data_na_omit,boot.cox.brier.estimate.outcome2,R=1000)
+brier.boot.outcome2$t0
+brier.boot.outcome2.se <- sd(brier.boot.outcome2$t)
+brier.boot.outcome2_B_lower <- brier.boot.outcome2$t0-1.96*brier.boot.outcome2.se
+brier.boot.outcome2_B_lower
+brier.boot.outcome2_B_upper <- brier.boot.outcome2$t0+1.96*brier.boot.outcome2.se
+brier.boot.outcome2_B_upper
+# To obtain calibration slope
+  L <- lrm(formula = out.formula_2, x = T, y = T,data=data_na_omit,weights = ow2_est$psweights)
+  Slope <- vector()
+  n <- nrow(data_na_omit)
+  for(i in 1 : 1000) {
+   g <- update(L, subset=sample(1 : n, n, replace=TRUE))
+   v <- validate(g)
+   Slope[i] <- v['Slope', 'index.corrected']
+   Slope[i]
+  }
+  Slope.outcome1.CI <- quantile(Slope, c(.025, .975))
+  Slope.outcome1.CI
+  Slope.outcome1 <- mean(Slope)
+  Slope.outcome1
+
+```
+
+
+```{r}
+###########################################################
+# Kaplan-Meier Survival Curves
+###########################################################
+# Reference: Alboukadel Kassambara, Marcin Kosinski, Przemyslaw Biecek, Scheipl Fabian (2021). survminer: Drawing Survival Curves using 'ggplot2'-processing in R. R version 0.4.9.https://cran.r-project.org/web/packages/survminer
+
+
+## Outcome 1: Relapse-free survival ##
+fit_RFS <- survfit(Surv(Relapse_free_survival_time_to_event,Relapse_free_survival) ~ FEV1,data=data_na_omit)
+summary(fit_RFS)
+
+grid.draw.ggsurvplot <- function(x){
+  survminer:::print.ggsurvplot(x, newpAge = FALSE)
+}
+Relapse_free_survival_KM <- ggsurvplot(
+  fit_RFS,                    
+  pval = FALSE,         
+  log.rank.weights="1",
+  xlab = "Follow up time (years)",   
+  ylab = "Relapse-free survival (probability)",
+  break.time.by = 12,  
+  xscale = "m_y",
+  xlim=c(0,72),
+  legend.labs = 
+    c("FEV1 ≥ 82%pred", "FEV1 < 82%pred"),    
+  palette = 
+    c("#2E9FDF", "#F08080"), 
+  conf.int = T,
+  surv.scale = c("percent"),
+  legend = c(0.9,0.15),
+  legend.title = "",
+  risk.table = "absolute", 
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = FALSE,
+  risk.table.height = 0.4,
+)
+ggsave(file = "Relapse_free_survival_KM.pdf", Relapse_free_survival_KM, width = 16, height = 8.5, units = "in") 
+
+
+## Outcome 2: Overall survival ##
+fit_OS <- survfit(Surv(Overall_survival_time_to_event, Overall_survival) ~ FEV1,data=data_na_omit)
+summary(fit_OS)
+
+Overall_survival <- ggsurvplot(
+  fit_OS,                    
+  pval = FALSE,             
+  xlab = "Follow up time (years)",   
+  ylab = "Overall survival (probability)",
+  break.time.by = 12,     
+  risk.table = "absolute",  
+  risk.table.y.text.col = TRUE,
+  risk.table.y.text = FALSE,
+  risk.table.height = 0.4,
+  legend.labs = 
+    c("FEV1 ≥ 80%pred", "FEV1 < 80%pred"),    
+  palette = 
+    c("#2E9FDF", "#F08080"), 
+  xlim=c(0,72),
+  legend = c(0.9,0.15),
+  legend.title = "",
+  conf.int = T,
+  surv.scale = c("percent"),
+  xscale = "m_y",
+)
+
+ggsave(file = "Overall_survival.pdf", Overall_survival, width = 16, height = 8.5, units = "in")
+
+```
+
+
+```{r}
+
+#############################################################################
+# interaction Tests
+#############################################################################
+
+######### Relpase-free survival  #########
+# 1. Sex
+data_na_omit$Sex_num <- as.numeric(data_na_omit$Sex)
+out.formula_interaction_test_Sex<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Sex_num*FEV1
+glm_interaction_test_Sex<-glm(out.formula_interaction_test_Sex, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Sex <- coef(summary(glm_interaction_test_Sex))[,4]
+Outcome1_p_Sex['FEV11:Sex_num']
+
+# 2. Age
+out.formula_interaction_test_Age<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Age*FEV1
+glm_interaction_test_Age<-glm(out.formula_interaction_test_Age, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Age <- coef(summary(glm_interaction_test_Age))[,4]
+Outcome1_p_Age['FEV11:Age']
+
+# 3. BMI
+out.formula_interaction_test_BMI<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+BMI*FEV1
+glm_interaction_test_BMI<-glm(out.formula_interaction_test_BMI, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_BMI <- coef(summary(glm_interaction_test_BMI))[,4]
+Outcome1_p_BMI['FEV11:BMI']
+
+# 4. Smoking ever
+data_na_omit$Smoking_ever_num <- as.numeric(data_na_omit$Smoking_ever)
+out.formula_interaction_test_Smoking_ever<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Smoking_ever_num*FEV1
+glm_interaction_test_Smoking_ever<-glm(out.formula_interaction_test_Smoking_ever, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Smoking_ever <- coef(summary(glm_interaction_test_Smoking_ever))[,4]
+Outcome1_p_Smoking_ever['FEV11:Smoking_ever_num']
+
+# 5. Metabolic equivalents
+out.formula_interaction_test_MET<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+MET*FEV1
+glm_interaction_test_MET<-glm(out.formula_interaction_test_MET, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_MET <- coef(summary(glm_interaction_test_MET))[,4]
+Outcome1_p_MET['FEV11:MET']
+
+# 5. Hypertension
+data_na_omit$Hypertension_num <- as.numeric(data_na_omit$Hypertension)
+out.formula_interaction_test_Hypertension<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Hypertension_num*FEV1
+glm_interaction_test_Hypertension<-glm(out.formula_interaction_test_Hypertension, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Hypertension <- coef(summary(glm_interaction_test_Hypertension))[,4]
+Outcome1_p_Hypertension['FEV11:Hypertension_num']
+
+# 6. Dyslipidemia
+data_na_omit$Dyslipidemia_num <- as.numeric(data_na_omit$Dyslipidemia)
+out.formula_interaction_test_Dyslipidemia<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Dyslipidemia_num*FEV1
+glm_interaction_test_Dyslipidemia<-glm(out.formula_interaction_test_Dyslipidemia, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Dyslipidemia <- coef(summary(glm_interaction_test_Dyslipidemia))[,4]
+Outcome1_p_Dyslipidemia['FEV11:Dyslipidemia_num']
+
+# 7. Diabetes
+data_na_omit$Diabetes_num <- as.numeric(data_na_omit$Diabetes)
+out.formula_interaction_test_Diabetes<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Diabetes_num*FEV1
+glm_interaction_test_Diabetes<-glm(out.formula_interaction_test_Diabetes, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Diabetes <- coef(summary(glm_interaction_test_Diabetes))[,4]
+Outcome1_p_Diabetes['FEV11:Diabetes_num']
+
+# 8. Coronary artery disease
+data_na_omit$Coronary_artery_disease_num <- as.numeric(data_na_omit$Coronary_artery_disease)
+out.formula_interaction_test_Coronary_artery_disease<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Coronary_artery_disease_num*FEV1
+glm_interaction_test_Coronary_artery_disease<-glm(out.formula_interaction_test_Coronary_artery_disease, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Coronary_artery_disease <- coef(summary(glm_interaction_test_Coronary_artery_disease))[,4]
+Outcome1_p_Coronary_artery_disease['FEV11:Coronary_artery_disease_num']
+
+# 9. Cerebrovascular disease
+data_na_omit$Cerebrovascular_disease_num <- as.numeric(data_na_omit$Cerebrovascular_disease)
+out.formula_interaction_test_Cerebrovascular_disease<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Cerebrovascular_disease_num*FEV1
+glm_interaction_test_Cerebrovascular_disease<-glm(out.formula_interaction_test_Cerebrovascular_disease, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Cerebrovascular_disease <- coef(summary(glm_interaction_test_Cerebrovascular_disease))[,4]
+Outcome1_p_Cerebrovascular_disease['FEV11:Cerebrovascular_disease_num']
+
+# 10. Chronic bronchitis
+data_na_omit$Bronchitis_num <- as.numeric(data_na_omit$Bronchitis)
+out.formula_interaction_test_Bronchitis<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Bronchitis_num*FEV1
+glm_interaction_test_Bronchitis<-glm(out.formula_interaction_test_Bronchitis, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Bronchitis <- coef(summary(glm_interaction_test_Bronchitis))[,4]
+Outcome1_p_Bronchitis['FEV11:Bronchitis_num']
+
+# 11. Histology
+data_na_omit$Histology_num <- as.numeric(data_na_omit$Histology)
+out.formula_interaction_test_Histology<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Histology_num*FEV1
+glm_interaction_test_Histology<-glm(out.formula_interaction_test_Histology, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Histology <- coef(summary(glm_interaction_test_Histology))[,4]
+Outcome1_p_Histology['FEV11:Histology_num']
+
+# 12. Type of lung resection
+data_na_omit$Type_of_lung_resection_num <- as.numeric(data_na_omit$Type_of_lung_resection)
+out.formula_interaction_test_Type_of_lung_resection<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Type_of_lung_resection_num*FEV1
+glm_interaction_test_Type_of_lung_resection<-glm(out.formula_interaction_test_Type_of_lung_resection, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Type_of_lung_resection <- coef(summary(glm_interaction_test_Type_of_lung_resection))[,4]
+Outcome1_p_Type_of_lung_resection['FEV11:Type_of_lung_resection_num']
+
+# 13. Clinical stage
+data_na_omit$Clinical_stage_num <- as.numeric(data_na_omit$Clinical_stage)
+out.formula_interaction_test_Clinical_stage<-Relapse_free_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Clinical_stage_num*FEV1
+glm_interaction_test_Clinical_stage<-glm(out.formula_interaction_test_Clinical_stage, data=data_na_omit, weight=ow1_est$psweights)
+Outcome1_p_Clinical_stage <- coef(summary(glm_interaction_test_Clinical_stage))[,4]
+Outcome1_p_Clinical_stage['FEV11:Clinical_stage_num']
+
+
+######### Overall survival  #########
+# 1. Sex
+data_na_omit$Sex_num <- as.numeric(data_na_omit$Sex)
+out.formula_interaction_test_Sex<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Sex_num*FEV1
+glm_interaction_test_Sex<-glm(out.formula_interaction_test_Sex, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Sex <- coef(summary(glm_interaction_test_Sex))[,4]
+Outcome2_p_Sex['FEV11:Sex_num']
+
+# 2. Age
+out.formula_interaction_test_Age<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Age*FEV1
+glm_interaction_test_Age<-glm(out.formula_interaction_test_Age, data=data_na_omit, weight=ow1_est$psweights)
+Outcome2_p_Age <- coef(summary(glm_interaction_test_Age))[,4]
+Outcome2_p_Age['FEV11:Age']
+
+# 3. BMI
+out.formula_interaction_test_BMI<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+BMI*FEV1
+glm_interaction_test_BMI<-glm(out.formula_interaction_test_BMI, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_BMI <- coef(summary(glm_interaction_test_BMI))[,4]
+Outcome2_p_BMI['FEV11:BMI']
+
+# 4. Smoking ever
+data_na_omit$Smoking_ever_num <- as.numeric(data_na_omit$Smoking_ever)
+out.formula_interaction_test_Smoking_ever<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Smoking_ever_num*FEV1
+glm_interaction_test_Smoking_ever<-glm(out.formula_interaction_test_Smoking_ever, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Smoking_ever <- coef(summary(glm_interaction_test_Smoking_ever))[,4]
+Outcome2_p_Smoking_ever['FEV11:Smoking_ever_num']
+
+# 5. Metabolic equivalents
+out.formula_interaction_test_MET<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+MET*FEV1
+glm_interaction_test_MET<-glm(out.formula_interaction_test_MET, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_MET <- coef(summary(glm_interaction_test_MET))[,4]
+Outcome2_p_MET['FEV11:MET']
+
+# 5. Hypertension
+data_na_omit$Hypertension_num <- as.numeric(data_na_omit$Hypertension)
+out.formula_interaction_test_Hypertension<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Hypertension_num*FEV1
+glm_interaction_test_Hypertension<-glm(out.formula_interaction_test_Hypertension, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Hypertension <- coef(summary(glm_interaction_test_Hypertension))[,4]
+Outcome2_p_Hypertension['FEV11:Hypertension_num']
+
+# 6. Dyslipidemia
+data_na_omit$Dyslipidemia_num <- as.numeric(data_na_omit$Dyslipidemia)
+out.formula_interaction_test_Dyslipidemia<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Dyslipidemia_num*FEV1
+glm_interaction_test_Dyslipidemia<-glm(out.formula_interaction_test_Dyslipidemia, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Dyslipidemia <- coef(summary(glm_interaction_test_Dyslipidemia))[,4]
+Outcome2_p_Dyslipidemia['FEV11:Dyslipidemia_num']
+
+# 7. Diabetes
+data_na_omit$Diabetes_num <- as.numeric(data_na_omit$Diabetes)
+out.formula_interaction_test_Diabetes<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Diabetes_num*FEV1
+glm_interaction_test_Diabetes<-glm(out.formula_interaction_test_Diabetes, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Diabetes <- coef(summary(glm_interaction_test_Diabetes))[,4]
+Outcome2_p_Diabetes['FEV11:Diabetes_num']
+
+# 8. Coronary artery disease
+data_na_omit$Coronary_artery_disease_num <- as.numeric(data_na_omit$Coronary_artery_disease)
+out.formula_interaction_test_Coronary_artery_disease<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Coronary_artery_disease_num*FEV1
+glm_interaction_test_Coronary_artery_disease<-glm(out.formula_interaction_test_Coronary_artery_disease, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Coronary_artery_disease <- coef(summary(glm_interaction_test_Coronary_artery_disease))[,4]
+Outcome2_p_Coronary_artery_disease['FEV11:Coronary_artery_disease_num']
+
+# 9. Cerebrovascular disease
+data_na_omit$Cerebrovascular_disease_num <- as.numeric(data_na_omit$Cerebrovascular_disease)
+out.formula_interaction_test_Cerebrovascular_disease<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Cerebrovascular_disease_num*FEV1
+glm_interaction_test_Cerebrovascular_disease<-glm(out.formula_interaction_test_Cerebrovascular_disease, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Cerebrovascular_disease <- coef(summary(glm_interaction_test_Cerebrovascular_disease))[,4]
+Outcome2_p_Cerebrovascular_disease['FEV11:Cerebrovascular_disease_num']
+
+# 10. Chronic bronchitis
+data_na_omit$Bronchitis_num <- as.numeric(data_na_omit$Bronchitis)
+out.formula_interaction_test_Bronchitis<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Bronchitis_num*FEV1
+glm_interaction_test_Bronchitis<-glm(out.formula_interaction_test_Bronchitis, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Bronchitis <- coef(summary(glm_interaction_test_Bronchitis))[,4]
+Outcome2_p_Bronchitis['FEV11:Bronchitis_num']
+
+# 11. Histology
+data_na_omit$Histology_num <- as.numeric(data_na_omit$Histology)
+out.formula_interaction_test_Histology<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Histology_num*FEV1
+glm_interaction_test_Histology<-glm(out.formula_interaction_test_Histology, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Histology <- coef(summary(glm_interaction_test_Histology))[,4]
+Outcome2_p_Histology['FEV11:Histology_num']
+
+# 12. Type of lung resection
+data_na_omit$Type_of_lung_resection_num <- as.numeric(data_na_omit$Type_of_lung_resection)
+out.formula_interaction_test_Type_of_lung_resection<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Type_of_lung_resection_num*FEV1
+glm_interaction_test_Type_of_lung_resection<-glm(out.formula_interaction_test_Type_of_lung_resection, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Type_of_lung_resection <- coef(summary(glm_interaction_test_Type_of_lung_resection))[,4]
+Outcome2_p_Type_of_lung_resection['FEV11:Type_of_lung_resection_num']
+
+# 13. Clinical stage
+data_na_omit$Clinical_stage_num <- as.numeric(data_na_omit$Clinical_stage)
+out.formula_interaction_test_Clinical_stage<-Overall_survival~FEV1+Sex+Age+BMI+Smoking_ever+MET+Hypertension+Dyslipidemia+Diabetes+Coronary_artery_disease+Cerebrovascular_disease+Bronchitis+Histology+Type_of_lung_resection+Clinical_stage+Clinical_stage_num*FEV1
+glm_interaction_test_Clinical_stage<-glm(out.formula_interaction_test_Clinical_stage, data=data_na_omit, weight=ow2_est$psweights)
+Outcome2_p_Clinical_stage <- coef(summary(glm_interaction_test_Clinical_stage))[,4]
+Outcome2_p_Clinical_stage['FEV11:Clinical_stage_num']
+
+```
+
+
+```{R}
+
+#############################################################################
+# Subgroup analyses
+#############################################################################
+
+# The study involved conducting pre-specified subgroup analyses based on birth sex and age, as well as additional subgroups determined by significant factors identified in the interaction tests. Specifically, subgroup analyses were performed on subgroups defined by sex, age, smoking history, cerebrovascular disease, tuberculosis, and chronic obstructive pulmonary disease. In order to ensure consistency, overlap weighting propensity scores were re-created prior to subgroup model development, and all other analyses followed the same process outlined above. Due to the length of the analysis, the codes utilized in this process were not repeated in this section for brevity.
+
+```
