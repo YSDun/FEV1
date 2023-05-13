@@ -1,5 +1,5 @@
 ---
-title: "Association between FEV1 and Long-Term Survival in Operable Patients with Early-Stage Non-Small Cell Lung Cancer: A Prospective Study with Propensity Overlap Weighting"
+Title: "Forced Expiratory Volume in One Second and Survival in Operable Non-Small Cell Lung Cancer Patients"
 ---
 
 
@@ -179,7 +179,7 @@ print(tabWeighted, smd = TRUE)
 new.names <- c(Sex = "Sex",
                Age = "Age",
                BMI = "BMI",
-               Smoking_ever = "Smoke ever",
+               Smoking_ever = "Ever Smoked",
                MET = "Metabolic equivalents",
                Hypertension = "Hypertension",
                Dyslipidemia = "Dyslipidemia",
